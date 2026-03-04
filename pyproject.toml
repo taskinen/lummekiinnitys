@@ -1,0 +1,11 @@
+[project]
+name = "lummekiinnitys"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx",
+]
+
+[build-system]
+requires = ["uv_build>=0.10.8,<0.11.0"]
+build-backend = "uv_build"

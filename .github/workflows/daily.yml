@@ -1,0 +1,52 @@
+name: Daily price fetch & report
+
+on:
+  schedule:
+    - cron: '0 5 * * *'  # 8 AM Finnish summer time (EEST), 7 AM winter (EET)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: daily-update
+  cancel-in-progress: false
+
+jobs:
+  fetch-and-publish:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Fetch and store prices
+        run: uv run -m lummekiinnitys store
+
+      - name: Commit database
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add prices.db
+          git diff --staged --quiet || git commit -m "Update prices $(date -u +%Y-%m-%d)"
+          git push
+
+      - name: Generate report
+        run: |
+          mkdir -p _site
+          uv run -m lummekiinnitys report > _site/index.html
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4
