@@ -1,5 +1,5 @@
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
 
@@ -43,7 +43,7 @@ def generate_report(path: Path = DB_PATH) -> str:
 
 
 def _html_header(earliest_date: str, latest_date: str) -> str:
-    generated_iso = datetime.now().isoformat()
+    generated_iso = datetime.now(timezone.utc).isoformat()
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
