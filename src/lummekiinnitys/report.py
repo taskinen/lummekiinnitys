@@ -1,9 +1,16 @@
+import json
 from collections import defaultdict
 from datetime import datetime, timezone
 from html import escape
 from pathlib import Path
 
 from .db import DB_PATH, load_all_offers
+
+SERIES_COLORS = [
+    "#96008f", "#e6194b", "#3cb44b", "#4363d8",
+    "#f58231", "#911eb4", "#42d4f4", "#f032e6",
+    "#bfef45", "#fabed4",
+]
 
 
 def generate_report(path: Path = DB_PATH) -> str:
@@ -29,14 +36,10 @@ def generate_report(path: Path = DB_PATH) -> str:
 
     html_parts = [_html_header(earliest_date, latest_date)]
     html_parts.append(_summary_table(latest_rows))
-    html_parts.append('<h2>Price History by Period</h2>')
 
-    for (year, quarter), period_rows in sorted_periods:
-        start = period_rows[0]["price_start_date"][:10]
-        end = period_rows[0]["price_end_date"][:10]
-        title = f"Q{quarter}/{year} ({start} – {end})"
-        html_parts.append(f"<h3>{escape(title)}</h3>")
-        html_parts.append(_svg_chart(period_rows))
+    chart_json = _chart_data(sorted_periods)
+    html_parts.append('<h2>Price History</h2>')
+    html_parts.append(_interactive_chart(chart_json))
 
     html_parts.append("</div></body></html>")
     return "\n".join(html_parts)
@@ -50,6 +53,8 @@ def _html_header(earliest_date: str, latest_date: str) -> str:
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Lumme Energia – Fixed Price Report</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.32/dist/uPlot.min.css">
+<script src="https://cdn.jsdelivr.net/npm/uplot@1.6.32/dist/uPlot.iife.min.js"></script>
 <style>
   body {{
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -75,14 +80,24 @@ def _html_header(earliest_date: str, latest_date: str) -> str:
   th {{ background: #96008f; color: white; }}
   td:first-child, th:first-child {{ text-align: left; }}
   tr:hover td {{ background: #f0e6ef; }}
-  h3 {{ color: #555; margin-top: 2rem; }}
-  svg {{ display: block; margin: 0.5rem 0 1.5rem; }}
-  .chart-line {{ fill: none; stroke: #96008f; stroke-width: 2; }}
-  .chart-dot {{ fill: #96008f; }}
-  .chart-grid {{ stroke: #e0e0e0; stroke-width: 1; }}
-  .chart-axis {{ stroke: #999; stroke-width: 1; }}
-  .chart-label {{ font-size: 11px; fill: #666; }}
-  .chart-value {{ font-size: 10px; fill: #96008f; font-weight: bold; }}
+  #chart {{ margin: 1rem 0 2rem; position: relative; }}
+  #tooltip {{
+    display: none;
+    position: absolute;
+    pointer-events: none;
+    background: rgba(255,255,255,0.95);
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: 12px;
+    line-height: 1.5;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    z-index: 10;
+    white-space: nowrap;
+  }}
+  #tooltip .tt-date {{ font-weight: bold; margin-bottom: 2px; }}
+  #tooltip .tt-row {{ display: flex; align-items: center; gap: 6px; }}
+  #tooltip .tt-dot {{ width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }}
 </style>
 </head>
 <body>
@@ -130,87 +145,130 @@ def _summary_table(latest_rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def _svg_chart(period_rows: list[dict]) -> str:
-    # Collect data points: (fetch_date_str, price_with_vat)
-    data = [(r["fetch_date"], r["price_with_vat"]) for r in period_rows]
+def _chart_data(sorted_periods: list[tuple[tuple[int, int], list[dict]]]) -> str:
+    all_dates = sorted({r["fetch_date"] for _, rows in sorted_periods for r in rows})
+    date_index = {d: i for i, d in enumerate(all_dates)}
 
-    if len(data) == 0:
-        return "<p>No data</p>"
+    timestamps = []
+    for d in all_dates:
+        dt = datetime.strptime(d, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        timestamps.append(int(dt.timestamp()))
 
-    # Chart dimensions
-    w, h = 700, 280
-    pad_left, pad_right, pad_top, pad_bottom = 60, 20, 20, 50
+    series = []
+    for (year, quarter), period_rows in sorted_periods:
+        label = f"Q{quarter}/{year}"
+        values: list[float | None] = [None] * len(all_dates)
+        for r in period_rows:
+            idx = date_index[r["fetch_date"]]
+            values[idx] = round(r["price_with_vat"], 4)
+        series.append({"label": label, "values": values})
 
-    plot_w = w - pad_left - pad_right
-    plot_h = h - pad_top - pad_bottom
+    return json.dumps({"timestamps": timestamps, "series": series})
 
-    prices = [p for _, p in data]
-    min_p = min(prices)
-    max_p = max(prices)
 
-    # Add some padding to y range
-    y_margin = max((max_p - min_p) * 0.15, 0.5)
-    y_min = min_p - y_margin
-    y_max = max_p + y_margin
+def _interactive_chart(chart_data_json: str) -> str:
+    colors_js = json.dumps(SERIES_COLORS)
+    return f"""<div id="chart"><div id="tooltip"></div></div>
+<script>
+(function() {{
+  var COLORS = {colors_js};
+  var raw = {chart_data_json};
+  var tooltip = document.getElementById("tooltip");
 
-    def x_pos(i: int) -> float:
-        if len(data) == 1:
-            return pad_left + plot_w / 2
-        return pad_left + (i / (len(data) - 1)) * plot_w
+  var data = [raw.timestamps];
+  raw.series.forEach(function(s) {{ data.push(s.values); }});
 
-    def y_pos(price: float) -> float:
-        if y_max == y_min:
-            return pad_top + plot_h / 2
-        return pad_top + (1 - (price - y_min) / (y_max - y_min)) * plot_h
+  var seriesConfig = [{{}}];
+  raw.series.forEach(function(s, i) {{
+    seriesConfig.push({{
+      label: s.label,
+      stroke: COLORS[i % COLORS.length],
+      width: 2,
+      points: {{ size: 5 }},
+      value: function(u, v) {{ return v == null ? "--" : v.toFixed(3) + " c/kWh"; }}
+    }});
+  }});
 
-    parts = [f'<svg viewBox="0 0 {w} {h}" xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}">']
+  var el = document.getElementById("chart");
 
-    # Y-axis gridlines and labels
-    n_yticks = 5
-    for i in range(n_yticks + 1):
-        val = y_min + (y_max - y_min) * i / n_yticks
-        y = y_pos(val)
-        parts.append(f'<line x1="{pad_left}" y1="{y:.1f}" x2="{w - pad_right}" y2="{y:.1f}" class="chart-grid"/>')
-        parts.append(f'<text x="{pad_left - 5}" y="{y + 4:.1f}" text-anchor="end" class="chart-label">{val:.2f}</text>')
+  var opts = {{
+    width: Math.min(el.clientWidth, 880),
+    height: 400,
+    cursor: {{
+      drag: {{ x: true, y: false }},
+    }},
+    plugins: [{{
+      hooks: {{
+        setCursor: [function(u) {{
+          var idx = u.cursor.idx;
+          var left = u.cursor.left;
+          var top = u.cursor.top;
+          if (idx == null || left < 0) {{
+            tooltip.style.display = "none";
+            return;
+          }}
+          var date = new Date(raw.timestamps[idx] * 1000);
+          var dateStr = date.toISOString().slice(0, 10);
+          var html = '<div class="tt-date">' + dateStr + '</div>';
+          var hasAny = false;
+          for (var i = 1; i < u.series.length; i++) {{
+            if (!u.series[i].show) continue;
+            var v = data[i][idx];
+            if (v == null) continue;
+            hasAny = true;
+            html += '<div class="tt-row">'
+              + '<span class="tt-dot" style="background:' + u.series[i].stroke() + '"></span>'
+              + '<span>' + u.series[i].label + ': ' + v.toFixed(3) + ' c/kWh</span>'
+              + '</div>';
+          }}
+          if (!hasAny) {{
+            tooltip.style.display = "none";
+            return;
+          }}
+          tooltip.innerHTML = html;
+          tooltip.style.display = "block";
+          var tipW = tooltip.offsetWidth;
+          var xPos = left + 15;
+          if (xPos + tipW > el.clientWidth) xPos = left - tipW - 15;
+          tooltip.style.left = xPos + "px";
+          tooltip.style.top = (top + 15) + "px";
+        }}]
+      }}
+    }}],
+    scales: {{
+      x: {{ time: true }},
+      y: {{ range: function(u, min, max) {{ return [0, max]; }} }},
+    }},
+    axes: [
+      {{
+        stroke: "#666",
+        grid: {{ stroke: "#e0e0e0" }},
+      }},
+      {{
+        stroke: "#666",
+        grid: {{ stroke: "#e0e0e0" }},
+        label: "c/kWh (incl. VAT)",
+        size: 60,
+        values: function(u, vals) {{ return vals.map(function(v) {{ return v.toFixed(2); }}); }},
+      }}
+    ],
+    series: seriesConfig,
+  }};
 
-    # Axes
-    parts.append(f'<line x1="{pad_left}" y1="{pad_top}" x2="{pad_left}" y2="{h - pad_bottom}" class="chart-axis"/>')
-    parts.append(f'<line x1="{pad_left}" y1="{h - pad_bottom}" x2="{w - pad_right}" y2="{h - pad_bottom}" class="chart-axis"/>')
+  var chart = new uPlot(opts, data, el);
 
-    # Y-axis label
-    parts.append(
-        f'<text x="15" y="{pad_top + plot_h / 2}" text-anchor="middle" '
-        f'transform="rotate(-90, 15, {pad_top + plot_h / 2})" class="chart-label">c/kWh (incl. VAT)</text>'
-    )
+  el.addEventListener("dblclick", function() {{
+    chart.setScale("x", {{
+      min: raw.timestamps[0],
+      max: raw.timestamps[raw.timestamps.length - 1]
+    }});
+  }});
 
-    # X-axis date labels — show a reasonable subset
-    max_labels = 12
-    step = max(1, len(data) // max_labels)
-    for i in range(0, len(data), step):
-        x = x_pos(i)
-        label = data[i][0]  # fetch_date string
-        parts.append(
-            f'<text x="{x:.1f}" y="{h - pad_bottom + 18}" text-anchor="middle" class="chart-label">{escape(label)}</text>'
-        )
-    # Always show last label if not already shown
-    if (len(data) - 1) % step != 0 and len(data) > 1:
-        x = x_pos(len(data) - 1)
-        label = data[-1][0]
-        parts.append(
-            f'<text x="{x:.1f}" y="{h - pad_bottom + 18}" text-anchor="middle" class="chart-label">{escape(label)}</text>'
-        )
-
-    # Line path
-    if len(data) > 1:
-        points = " ".join(f"{x_pos(i):.1f},{y_pos(p):.1f}" for i, (_, p) in enumerate(data))
-        parts.append(f'<polyline points="{points}" class="chart-line"/>')
-
-    # Dots and value labels
-    for i, (d, p) in enumerate(data):
-        x = x_pos(i)
-        y = y_pos(p)
-        parts.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="3.5" class="chart-dot"/>')
-        parts.append(f'<text x="{x:.1f}" y="{y - 8:.1f}" text-anchor="middle" class="chart-value">{p:.3f}</text>')
-
-    parts.append("</svg>")
-    return "\n".join(parts)
+  window.addEventListener("resize", function() {{
+    chart.setSize({{
+      width: Math.min(el.clientWidth, 880),
+      height: 400
+    }});
+  }});
+}})();
+</script>"""
