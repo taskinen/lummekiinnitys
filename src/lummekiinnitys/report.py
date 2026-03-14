@@ -83,37 +83,6 @@ def _html_header(earliest_date: str, latest_date: str) -> str:
   .chart-axis {{ stroke: #999; stroke-width: 1; }}
   .chart-label {{ font-size: 11px; fill: #666; }}
   .chart-value {{ font-size: 10px; fill: #96008f; font-weight: bold; }}
-  .toggle-wrap {{
-    display: inline-flex;
-    align-items: center;
-    margin-left: 0.8rem;
-    font-size: 0.85rem;
-    vertical-align: middle;
-  }}
-  .toggle-label {{ color: #888; cursor: pointer; user-select: none; }}
-  .toggle-label.active {{ color: #96008f; font-weight: bold; }}
-  .toggle-track {{
-    width: 40px;
-    height: 22px;
-    background: #96008f;
-    border-radius: 11px;
-    margin: 0 0.4rem;
-    cursor: pointer;
-    position: relative;
-    transition: background 0.2s;
-  }}
-  .toggle-track::after {{
-    content: "";
-    position: absolute;
-    top: 3px;
-    left: 3px;
-    width: 16px;
-    height: 16px;
-    background: white;
-    border-radius: 50%;
-    transition: transform 0.2s;
-  }}
-  .toggle-track.off::after {{ transform: translateX(18px); }}
 </style>
 </head>
 <body>
@@ -145,14 +114,9 @@ def _html_header(earliest_date: str, latest_date: str) -> str:
 
 def _summary_table(latest_rows: list[dict]) -> str:
     lines = [
-        '<h2>Current Prices'
-        ' <span class="toggle-wrap">'
-        '<span class="toggle-label active" id="lbl-vat" onclick="toggleVat()">VAT</span>'
-        '<span class="toggle-track" id="toggle-track" onclick="toggleVat()"></span>'
-        '<span class="toggle-label" id="lbl-novat" onclick="toggleVat()">No VAT</span>'
-        '</span></h2>',
+        '<h2>Current Prices</h2>',
         '<table id="price-table">',
-        '<tr><th>Period</th><th id="price-header">Price (incl. VAT)</th></tr>',
+        '<tr><th>Period</th><th>Price (incl. VAT)</th></tr>',
     ]
     for r in latest_rows:
         start = r["price_start_date"][:10]
@@ -160,26 +124,9 @@ def _summary_table(latest_rows: list[dict]) -> str:
         period = f"Q{r['quarter']}/{r['year']} ({start} – {end})"
         lines.append(
             f'<tr><td>{escape(period)}</td>'
-            f'<td class="price-cell" data-vat="{r["price_with_vat"]:.3f}" '
-            f'data-vat0="{r["price_vat0"]:.3f}">{r["price_with_vat"]:.3f} c/kWh</td></tr>'
+            f'<td>{r["price_with_vat"]:.3f} c/kWh</td></tr>'
         )
     lines.append("</table>")
-    lines.append("""<script>
-var showingVat = true;
-function toggleVat() {
-  showingVat = !showingVat;
-  var cells = document.querySelectorAll(".price-cell");
-  var attr = showingVat ? "data-vat" : "data-vat0";
-  for (var i = 0; i < cells.length; i++) {
-    cells[i].textContent = cells[i].getAttribute(attr) + " c/kWh";
-  }
-  document.getElementById("price-header").textContent =
-    showingVat ? "Price (incl. VAT)" : "Price (excl. VAT)";
-  document.getElementById("toggle-track").classList.toggle("off", !showingVat);
-  document.getElementById("lbl-vat").classList.toggle("active", showingVat);
-  document.getElementById("lbl-novat").classList.toggle("active", !showingVat);
-}
-</script>""")
     return "\n".join(lines)
 
 
