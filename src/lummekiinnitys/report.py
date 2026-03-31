@@ -18,23 +18,35 @@ def generate_report(path: Path = DB_PATH) -> str:
     if not rows:
         return "<html><body><p>No data in database.</p></body></html>"
 
-    # Group by period (year, quarter)
-    periods: dict[tuple[int, int], list[dict]] = defaultdict(list)
+    providers = sorted({r.get("provider", "lumme") for r in rows})
+
+    # Group by (provider, year, quarter)
+    periods: dict[tuple[str, int, int], list[dict]] = defaultdict(list)
     for row in rows:
-        key = (row["year"], row["quarter"])
+        provider = row.get("provider", "lumme")
+        key = (provider, row["year"], row["quarter"])
         periods[key].append(row)
 
-    # Sort periods by start date
-    sorted_periods = sorted(periods.items(), key=lambda kv: kv[1][0]["price_start_date"])
+    sorted_periods = sorted(periods.items(), key=lambda kv: (kv[0][1], kv[0][2], kv[0][0]))
 
-    # Date range for header
-    all_dates = [row["fetch_date"] for row in rows]
-    earliest_date = min(all_dates)
-    latest_date = max(all_dates)
-    latest_rows = [r for r in rows if r["fetch_date"] == latest_date]
-    latest_rows.sort(key=lambda r: r["price_start_date"])
+    # Per-provider date ranges
+    provider_ranges: dict[str, tuple[str, str]] = {}
+    for provider in providers:
+        dates = [r["fetch_date"] for r in rows if r.get("provider", "lumme") == provider]
+        provider_ranges[provider] = (min(dates), max(dates))
 
-    html_parts = [_html_header(earliest_date, latest_date)]
+    # Latest rows per provider
+    latest_rows = []
+    for provider in providers:
+        provider_rows = [r for r in rows if r.get("provider", "lumme") == provider]
+        if provider_rows:
+            prov_latest = max(r["fetch_date"] for r in provider_rows)
+            latest_rows.extend(
+                r for r in provider_rows if r["fetch_date"] == prov_latest
+            )
+    latest_rows.sort(key=lambda r: (r.get("provider", "lumme"), r["price_start_date"]))
+
+    html_parts = [_html_header(provider_ranges, providers)]
     html_parts.append(_summary_table(latest_rows))
 
     chart_json = _chart_data(sorted_periods)
@@ -45,14 +57,35 @@ def generate_report(path: Path = DB_PATH) -> str:
     return "\n".join(html_parts)
 
 
-def _html_header(earliest_date: str, latest_date: str) -> str:
+def _html_header(
+    provider_ranges: dict[str, tuple[str, str]],
+    providers: list[str],
+) -> str:
     generated_iso = datetime.now(timezone.utc).isoformat()
+    has_toggle = len(providers) > 1
+    toggle_html = ""
+    if has_toggle:
+        toggle_html = """
+<div class="toggle-group">
+  <button class="toggle-btn active" onclick="filterProvider('all')">Both</button>
+  <button class="toggle-btn" onclick="filterProvider('lumme')">Lumme</button>
+  <button class="toggle-btn" onclick="filterProvider('pks')">PKS</button>
+</div>"""
+
+    provider_labels = {"lumme": "Lumme", "pks": "PKS"}
+    subtitle_parts = []
+    for p in providers:
+        earliest, latest = provider_ranges[p]
+        label = provider_labels.get(p, p)
+        subtitle_parts.append(f"{label}: {earliest} \u2013 {latest}")
+    subtitle = " &nbsp;|&nbsp; ".join(subtitle_parts)
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Lumme Energia – Fixed Price Report</title>
+<title>Electricity Price Fix Offers</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.32/dist/uPlot.min.css">
 <script src="https://cdn.jsdelivr.net/npm/uplot@1.6.32/dist/uPlot.iife.min.js"></script>
 <style>
@@ -66,7 +99,26 @@ def _html_header(earliest_date: str, latest_date: str) -> str:
   }}
   h1 {{ color: #96008f; margin-bottom: 0.2rem; }}
   .subtitle {{ color: #666; margin-bottom: 0.3rem; }}
-  .report-age {{ color: #888; font-size: 0.9rem; margin-bottom: 2rem; }}
+  .report-age {{ color: #888; font-size: 0.9rem; margin-bottom: 1rem; }}
+  .toggle-group {{
+    display: flex; gap: 0; margin-bottom: 1.5rem;
+  }}
+  .toggle-btn {{
+    padding: 0.4rem 1.2rem;
+    border: 1px solid #96008f;
+    background: white;
+    color: #96008f;
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 500;
+  }}
+  .toggle-btn:first-child {{ border-radius: 4px 0 0 4px; }}
+  .toggle-btn:last-child {{ border-radius: 0 4px 4px 0; }}
+  .toggle-btn:not(:first-child) {{ border-left: none; }}
+  .toggle-btn.active {{
+    background: #96008f;
+    color: white;
+  }}
   table {{
     border-collapse: collapse;
     width: 100%;
@@ -79,7 +131,9 @@ def _html_header(earliest_date: str, latest_date: str) -> str:
   }}
   th {{ background: #96008f; color: white; }}
   td:first-child, th:first-child {{ text-align: left; }}
+  td:nth-child(2), th:nth-child(2) {{ text-align: left; }}
   tr:hover td {{ background: #f0e6ef; }}
+  tr.hidden {{ display: none; }}
   #chart {{ margin: 1rem 0 2rem; position: relative; }}
   #tooltip {{
     display: none;
@@ -102,9 +156,10 @@ def _html_header(earliest_date: str, latest_date: str) -> str:
 </head>
 <body>
 <div>
-<h1>Lumme Energia – Fixed Price Offers</h1>
-<p class="subtitle">Data from {earliest_date} to {latest_date}</p>
+<h1>Electricity Price Fix Offers</h1>
+<p class="subtitle">{subtitle}</p>
 <p class="report-age" id="report-age"></p>
+{toggle_html}
 <script>
 (function() {{
   var generated = new Date("{generated_iso}");
@@ -131,21 +186,27 @@ def _summary_table(latest_rows: list[dict]) -> str:
     lines = [
         '<h2>Current Prices</h2>',
         '<table id="price-table">',
-        '<tr><th>Period</th><th>Price (incl. VAT)</th></tr>',
+        '<tr><th>Period</th><th>Provider</th><th>Price (incl. VAT)</th></tr>',
     ]
     for r in latest_rows:
         start = r["price_start_date"][:10]
         end = r["price_end_date"][:10]
-        period = f"Q{r['quarter']}/{r['year']} ({start} – {end})"
+        provider = r.get("provider", "lumme")
+        provider_label = provider.upper() if provider == "pks" else provider.capitalize()
+        period = f"Q{r['quarter']}/{r['year']} ({start} \u2013 {end})"
         lines.append(
-            f'<tr><td>{escape(period)}</td>'
+            f'<tr data-provider="{escape(provider)}">'
+            f'<td>{escape(period)}</td>'
+            f'<td>{escape(provider_label)}</td>'
             f'<td>{r["price_with_vat"]:.3f} c/kWh</td></tr>'
         )
     lines.append("</table>")
     return "\n".join(lines)
 
 
-def _chart_data(sorted_periods: list[tuple[tuple[int, int], list[dict]]]) -> str:
+def _chart_data(
+    sorted_periods: list[tuple[tuple[str, int, int], list[dict]]],
+) -> str:
     all_dates = sorted({r["fetch_date"] for _, rows in sorted_periods for r in rows})
     date_index = {d: i for i, d in enumerate(all_dates)}
 
@@ -154,37 +215,48 @@ def _chart_data(sorted_periods: list[tuple[tuple[int, int], list[dict]]]) -> str
         dt = datetime.strptime(d, "%Y-%m-%d").replace(tzinfo=timezone.utc)
         timestamps.append(int(dt.timestamp()))
 
+    # Assign colors: same color per (year, quarter), dash for PKS
+    period_keys = sorted({(yr, q) for (_, yr, q), _ in sorted_periods})
+    color_map = {pk: SERIES_COLORS[i % len(SERIES_COLORS)] for i, pk in enumerate(period_keys)}
+
     series = []
-    for (year, quarter), period_rows in sorted_periods:
-        label = f"Q{quarter}/{year}"
+    for (provider, year, quarter), period_rows in sorted_periods:
+        label = f"Q{quarter}/{year} ({provider.upper() if provider == 'pks' else provider.capitalize()})"
         values: list[float | None] = [None] * len(all_dates)
         for r in period_rows:
             idx = date_index[r["fetch_date"]]
             values[idx] = round(r["price_with_vat"], 4)
-        series.append({"label": label, "values": values})
+        series.append({
+            "label": label,
+            "values": values,
+            "provider": provider,
+            "color": color_map[(year, quarter)],
+            "dashed": provider == "pks",
+        })
 
     return json.dumps({"timestamps": timestamps, "series": series})
 
 
 def _interactive_chart(chart_data_json: str) -> str:
-    colors_js = json.dumps(SERIES_COLORS)
     return f"""<div id="chart"><div id="tooltip"></div></div>
 <script>
 (function() {{
-  var COLORS = {colors_js};
   var raw = {chart_data_json};
   var tooltip = document.getElementById("tooltip");
+  var currentFilter = "all";
 
   var data = [raw.timestamps];
   raw.series.forEach(function(s) {{ data.push(s.values); }});
 
   var seriesConfig = [{{}}];
-  raw.series.forEach(function(s, i) {{
+  raw.series.forEach(function(s) {{
     seriesConfig.push({{
       label: s.label,
-      stroke: COLORS[i % COLORS.length],
+      stroke: s.color,
       width: 2,
-      points: {{ size: 5 }},
+      dash: s.dashed ? [6, 4] : undefined,
+      points: {{ size: 0 }},
+      provider: s.provider,
       value: function(u, v) {{ return v == null ? "--" : v.toFixed(3) + " c/kWh"; }}
     }});
   }});
@@ -216,8 +288,10 @@ def _interactive_chart(chart_data_json: str) -> str:
             var v = data[i][idx];
             if (v == null) continue;
             hasAny = true;
+            var color = u.series[i]._stroke || u.series[i].stroke;
+            if (typeof color === "function") color = color();
             html += '<div class="tt-row">'
-              + '<span class="tt-dot" style="background:' + u.series[i].stroke() + '"></span>'
+              + '<span class="tt-dot" style="background:' + color + '"></span>'
               + '<span>' + u.series[i].label + ': ' + v.toFixed(3) + ' c/kWh</span>'
               + '</div>';
           }}
@@ -270,5 +344,27 @@ def _interactive_chart(chart_data_json: str) -> str:
       height: 400
     }});
   }});
+
+  // Provider toggle
+  window.filterProvider = function(provider) {{
+    currentFilter = provider;
+    // Update buttons
+    var btns = document.querySelectorAll(".toggle-btn");
+    btns.forEach(function(btn) {{
+      var target = btn.getAttribute("onclick").match(/'([^']+)'/)[1];
+      btn.classList.toggle("active", target === provider);
+    }});
+    // Update table rows
+    var trs = document.querySelectorAll("#price-table tr[data-provider]");
+    trs.forEach(function(tr) {{
+      var p = tr.getAttribute("data-provider");
+      tr.classList.toggle("hidden", provider !== "all" && p !== provider);
+    }});
+    // Update chart series
+    for (var i = 1; i < seriesConfig.length; i++) {{
+      var show = provider === "all" || seriesConfig[i].provider === provider;
+      chart.setSeries(i, {{ show: show }});
+    }}
+  }};
 }})();
 </script>"""

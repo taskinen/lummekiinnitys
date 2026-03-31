@@ -14,6 +14,7 @@ class PriceFixOffer:
     vat: float
     price_with_vat: float
     change: float
+    provider: str = "lumme"
 
     @classmethod
     def from_dict(cls, data: dict) -> "PriceFixOffer":
