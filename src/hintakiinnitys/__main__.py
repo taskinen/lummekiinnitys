@@ -21,7 +21,7 @@ def main() -> None:
     if command is not None and command not in ("store", "report", "backfill-pks"):
         print(f"Unknown command: {command}", file=sys.stderr)
         print(
-            "Usage: uv run -m lummekiinnitys [store|report|backfill-pks]",
+            "Usage: uv run -m hintakiinnitys [store|report|backfill-pks]",
             file=sys.stderr,
         )
         sys.exit(1)

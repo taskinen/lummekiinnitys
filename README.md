@@ -1,10 +1,10 @@
-# Lummekiinnitys
+# Hintakiinnitys
 
 Track fixed electricity price offerings (*hintakiinnitykset*) from Finnish providers over time. Currently supports [Lumme Energia](https://www.lumme-energia.fi/) and [PKS (Pohjois-Karjalan Sähkö)](https://www.pks.fi/).
 
 Prices are fetched daily from each provider's public API, stored in a SQLite database, and published as an interactive HTML report.
 
-**[View the latest report](https://taskinen.github.io/lummekiinnitys/)**
+**[View the latest report](https://taskinen.github.io/hintakiinnitys/)**
 
 ## What it does
 
@@ -23,16 +23,16 @@ Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
 # Show current prices from all providers
-uv run -m lummekiinnitys
+uv run -m hintakiinnitys
 
 # Fetch prices and store to database
-uv run -m lummekiinnitys store
+uv run -m hintakiinnitys store
 
 # Generate HTML report from stored data
-uv run -m lummekiinnitys report > report.html
+uv run -m hintakiinnitys report > report.html
 
 # Backfill PKS historical prices
-uv run -m lummekiinnitys backfill-pks
+uv run -m hintakiinnitys backfill-pks
 ```
 
 ## Automation
@@ -48,7 +48,7 @@ The workflow can also be triggered manually from the Actions tab.
 ## Project structure
 
 ```
-src/lummekiinnitys/
+src/hintakiinnitys/
   __main__.py   CLI entry point
   client.py     Lumme Energia API client
   pks_client.py PKS API client

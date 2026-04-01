@@ -26,7 +26,7 @@ jobs:
       - uses: astral-sh/setup-uv@v5
 
       - name: Fetch and store prices
-        run: uv run -m lummekiinnitys store
+        run: uv run -m hintakiinnitys store
 
       - name: Commit database
         run: |
@@ -39,7 +39,7 @@ jobs:
       - name: Generate report
         run: |
           mkdir -p _site
-          uv run -m lummekiinnitys report > _site/index.html
+          uv run -m hintakiinnitys report > _site/index.html
 
       - uses: actions/configure-pages@v5
 

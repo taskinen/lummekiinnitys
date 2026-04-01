@@ -9,10 +9,10 @@ Python tool to fetch and track fixed electricity price offerings (hintakiinnityk
 
 ## Commands
 
-- **Show prices:** `uv run -m lummekiinnitys`
-- **Store to DB:** `uv run -m lummekiinnitys store`
-- **HTML report:** `uv run -m lummekiinnitys report > report.html`
-- **Backfill PKS history:** `uv run -m lummekiinnitys backfill-pks`
+- **Show prices:** `uv run -m hintakiinnitys`
+- **Store to DB:** `uv run -m hintakiinnitys store`
+- **HTML report:** `uv run -m hintakiinnitys report > report.html`
+- **Backfill PKS history:** `uv run -m hintakiinnitys backfill-pks`
 - **Add dependency:** `uv add <package>`
 
 ## Project Structure
@@ -20,7 +20,7 @@ Python tool to fetch and track fixed electricity price offerings (hintakiinnityk
 Uses `src` layout with `uv_build` backend:
 
 ```
-src/lummekiinnitys/
+src/hintakiinnitys/
   __main__.py   — CLI entry point
   client.py     — Lumme Energia API client (fetch_offers)
   pks_client.py — PKS API client (fetch_pks_offers, fetch_pks_history)
